@@ -1,0 +1,53 @@
+# Знімок B для ЛР 2 і частини C ЛР 5: заново завантажує ті самі тендери знімка A (у їхньому новому стані)
+# і замінює у релізі v1 файли zt_bronze_b та zt_silver_b.
+# Запускається один раз, автоматично 12.10.2026 о 07:00 за київським часом; вручну з публікацією не запускати
+# (ручний запуск не скасовує запланованого, і B було б замінено вдруге). Виняток: запуск 12.10 завершився помилкою
+# (bigdata-teacher/TEACHER.md). Пробний запуск без публікації: Actions -> «Оновити знімок B» -> Run workflow
+# (прапорець «Опублікувати файли в релізі v1» типово знято). Після того як студенти почали ЛР 2, не публікувати:
+# bd.data замінить уже завантажений B новим, і числа ЛР 2 зміняться посеред роботи.
+# Після успішного запуску розділ schedule слід вилучити.
+name: Оновити знімок B
+
+on:
+  schedule:
+    - cron: "0 4 12 10 *"   # 12 жовтня, 07:00 за київським часом; спрацьовує лише у 2026 році (див. перший крок)
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Опублікувати файли в релізі v1"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Перевірити рік (лише 2026)
+        if: github.event_name == 'schedule'
+        run: test "$(date +%Y)" = "2026" || { echo "розклад призначено лише на 2026 рік"; exit 1; }
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false   # токен із правом запису потрібен лише на останньому кроці
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Зняти знімок B
+        run: |
+          pip install -q requests==2.34.2 duckdb==1.5.6   # версії з bigdata-labs/uv.lock
+          # Структура тек, на яку розраховують скрипти
+          mkdir -p w/bigdata-labs w/bigdata-teacher/data_pipeline w/bigdata-teacher/_private w/_data
+          cp -r pipeline/bd w/bigdata-labs/   # pipeline/bd є копією bigdata-labs/bd; після зміни bd.minimize її треба оновити
+          cp pipeline/crawl_zhytomyr.py pipeline/build_snapshot.py w/bigdata-teacher/data_pipeline/
+          cp pipeline/a_ids.jsonl w/bigdata-teacher/_private/a_feed_zt.jsonl
+          cd w/bigdata-teacher/data_pipeline
+          python crawl_zhytomyr.py --tag b --start 2026-08-03 --end 2026-09-28 --ids-from a
+          python build_snapshot.py b
+      - name: Опублікувати файли в релізі v1
+        if: github.event_name == 'schedule' || inputs.upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v1 w/_data/zt_bronze_b.jsonl.gz w/_data/zt_silver_b.parquet --clobber --repo "$GITHUB_REPOSITORY"
